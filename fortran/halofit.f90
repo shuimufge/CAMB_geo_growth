@@ -60,7 +60,7 @@
     integer, parameter :: halofit_mead2016=5, halofit_halomodel=6, halofit_mead2015=8, halofit_mead2020=9
     integer, parameter :: halofit_mead2020_feedback=10
     integer, parameter :: halofit_mead=halofit_mead2016 ! AM Kept for backwards compatability
-    integer, parameter :: halofit_default=halofit_mead2020
+    integer, parameter :: halofit_default=halofit_mead2020, flevel=2
 
     logical :: HM_verbose = .false.
 
@@ -570,7 +570,7 @@
     IF(this%halofit_version==halofit_mead2015) this%imead=2
     IF(this%halofit_version==halofit_mead2020) this%imead=3
 
-    HM_verbose = (FeedbackLevel>1)
+    HM_verbose =  (FeedbackLevel>1) !(flevel>1)
 
     IF(HM_verbose) WRITE(*,*)
     IF(HM_verbose) WRITE(*,*) 'HMcode: Running HMcode'
@@ -1041,11 +1041,11 @@
     associate(CP => State%CP)
         !Converts CAMB parameters to Meadfit parameters
         h2 = (CP%H0/100)**2
-        cosm%om_m=(CP%omch2+CP%ombh2+CP%omnuh2)/h2
+        cosm%om_m=(CP%omch2+CP%ombh2+CP%omnuh2_growth)/h2
         cosm%om_c=CP%omch2/h2
         cosm%om_b=CP%ombh2/h2
-        cosm%om_nu=CP%omnuh2/h2
-        cosm%om_v=State%omega_de
+        cosm%om_nu=CP%omnuh2_growth/h2
+        cosm%om_v=State%omega_de_growth
         call CP%DarkEnergy%Effective_w_wa(cosm%w, cosm%wa)
         cosm%f_nu=cosm%om_nu/cosm%om_m
         cosm%h=CP%H0/100

@@ -91,11 +91,14 @@
     real(dl) CPP(0:State%CP%max_l)
 
     lmax_extrap = State%CP%Max_l - lensed_convolution_margin + 750
+    ! write(*,*) "first: lmax_extrap=", lmax_extrap
     lmax_extrap = min(lmax_extrap_highl,lmax_extrap)
+    ! write(*,*) "second: lmax_extrap=", lmax_extrap
     do l= State%CP%min_l,State%CP%max_l
         ! Cl_scalar(l,1,C_Phi) is l^4 C_phi_phi
         CPP(l) = State%CLdata%Cl_scalar(l,C_Phi)*(l+1)**2/real(l,dl)**2/const_twopi
     end do
+    ! write(*,*) "CP%max_l=", State%CP%max_l
     call CorrFuncFullSkyImpl(State, State%ClData, State%ClData, CPP, &
         State%CP%min_l,max(lmax_extrap,State%CP%max_l))
 
@@ -175,6 +178,7 @@
     !$ external OMP_GET_THREAD_NUM, OMP_GET_MAX_THREADS
 
     if (lensing_includes_tensors) call MpiStop('Haven''t implemented tensor lensing')
+    ! write(*,*) "CorrFuncFullSkyImpl: lmax=", lmax
     associate(lSamp => State%CLData%CTransScal%ls, CP=>State%CP)
 
         LensAccuracyBoost = CP%Accuracy%AccuracyBoost*CP%Accuracy%LensingBoost

@@ -48,7 +48,9 @@ Transfer_Weyl = 10
 Transfer_Newt_vel_cdm = 11
 Transfer_Newt_vel_baryon = 12
 Transfer_vel_baryon_cdm = 13
-Transfer_max = Transfer_vel_baryon_cdm
+Transfer_phiN = 14
+Transfer_psiN = 15
+Transfer_max = Transfer_psiN
 
 # for 21cm case
 Transfer_monopole = 4
@@ -292,6 +294,7 @@ class CAMBparams(F2003Class):
         ("Transfer", TransferParams),
         ("want_zstar", c_bool),
         ("want_zdrag", c_bool),
+        ("WantSplitGeo", c_bool, "if the split of geo and growth in mnu is wanted"),
         ("min_l", c_int, "l_min for the scalar C_L (1 or 2, L=1 dipoles are Newtonian Gauge)"),
         ("max_l", c_int, "l_max for the scalar C_L"),
         ("max_l_tensor", c_int, "l_max for the tensor C_L"),
@@ -301,9 +304,13 @@ class CAMBparams(F2003Class):
         ("omch2", c_double, "Omega_cdm h^2"),
         ("omk", c_double, "Omega_K"),
         ("omnuh2", c_double, "Omega_massive_neutrino h^2"),
+        ("omnuh2_growth", c_double, "Omega_massive_neutrino h^2 for growth H(z)"),
+        ("nnu", c_double, "number of neutrino species"),
         ("H0", c_double, "Hubble parameter is km/s/Mpc units"),
         ("TCMB", c_double, "CMB temperature today in Kelvin"),
         ("YHe", c_double, "Helium mass fraction"),
+        ("neutrino_hierarchy", c_int, "neutrino hierarchy type"),
+        ("num_massive_neutrinos", c_int, "Number of massive neutrino species"),
         ("num_nu_massless", c_double, "Effective number of massless neutrinos"),
         ("num_nu_massive", c_int, "Total physical (integer) number of massive neutrino species"),
         ("nu_mass_eigenstates", c_int, "Number of non-degenerate mass eigenstates"),
@@ -609,6 +616,8 @@ class CAMBparams(F2003Class):
         neutrino_hierarchy: str | int = "degenerate",
         num_massive_neutrinos=1,
         mnu=0.06,
+        mnu_growth: float | None = None,
+        WantSplitGeo = False, 
         nnu=constants.default_nnu,
         YHe: float | None = None,
         meffsterile=0.0,
@@ -697,8 +706,12 @@ class CAMBparams(F2003Class):
 
         if nnu >= standard_neutrino_neff or neutrino_hierarchy != neutrino_hierarchy_degenerate:
             omnuh2 = mnu / neutrino_mass_fac * (standard_neutrino_neff / 3) ** 0.75
+            if mnu_growth is not None:
+                omnuh2_growth = mnu_growth / neutrino_mass_fac * (standard_neutrino_neff / 3) ** 0.75
         else:
             omnuh2 = mnu / neutrino_mass_fac * (nnu / 3.0) ** 0.75
+            if mnu_growth is not None:
+                omnuh2_growth = mnu_growth / neutrino_mass_fac * (nnu / 3.0) ** 0.75
         omnuh2_sterile = meffsterile / neutrino_mass_fac
         if omnuh2_sterile > 0 and nnu < standard_neutrino_neff:
             raise CAMBError("sterile neutrino mass required Neff> %.3g" % constants.default_nnu)
@@ -707,8 +720,19 @@ class CAMBparams(F2003Class):
 
         omnuh2 = omnuh2 + omnuh2_sterile
         self.omnuh2 = omnuh2
+        self.WantSplitGeo = WantSplitGeo
+        if mnu_growth is not None:
+            if omnuh2_growth and not num_massive_neutrinos:
+                raise CAMBError("non-zero mnu_growth with zero num_massive_neutrinos")
+            self.omnuh2_growth = omnuh2_growth
+            if not WantSplitGeo:
+                logging.warning("mnu_growth is not None, set WantSplitGeo = True")
+            self.WantSplitGeo = True
         self.omk = omk
         assert num_massive_neutrinos == int(num_massive_neutrinos)
+        self.nnu = nnu
+        self.neutrino_hierarchy = neutrino_hierarchies.index(neutrino_hierarchy) + 1
+        self.num_massive_neutrinos = num_massive_neutrinos
         self.f_SetNeutrinoHierarchy(
             byref(c_double(omnuh2)),
             byref(c_double(omnuh2_sterile)),

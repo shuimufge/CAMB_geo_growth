@@ -202,12 +202,16 @@ class CAMBdata(F2003Class):
         ("taurend", c_double, "time at end of recombination"),
         ("tau_maxvis", c_double, "time at peak visibility"),
         ("adotrad", c_double, "da/d tau in early radiation-dominated era"),
+        ("taurst_geo", c_double, "time at start of recombination of geo H(z)"),
         ("omega_de", c_double, "Omega for dark energy today"),
+        ("omega_de_growth", c_double, "Omega for dark energy today for growth mnu"),
         ("curv", c_double, "curvature K"),
         ("curvature_radius", c_double, r":math:`1/\sqrt{|K|}`"),
         ("Ksign", c_double, "Ksign = 1,0 or -1"),
         ("tau0", c_double, "conformal time today"),
         ("chi0", c_double, "comoving angular diameter distance of big bang; rofChi(tau0/curvature_radius)"),
+        ("tau0_geo", c_double, "conformal time today for geo mnu"),
+        ("chi0_geo", c_double, "comoving angular diameter distance of big bang; rofChi(tau0/curvature_radius) for geo mnu"),
         ("scale", c_double, "relative to flat. e.g. for scaling L sampling"),
         ("akthom", c_double, "sigma_T * (number density of protons now)"),
         ("fHe", c_double, "n_He_tot / n_H_tot"),
@@ -252,6 +256,7 @@ class CAMBdata(F2003Class):
         ("get_lmax_lensed", [], c_int),
         ("get_zstar", [d_arg], c_double),
         ("SetParams", [POINTER(CAMBparams), int_arg, int_arg, int_arg, int_arg]),
+        ("ddamping_da", [d_arg], c_double),
     ]
 
     def __init__(self):
@@ -1675,6 +1680,9 @@ class CAMBdata(F2003Class):
             return arr
         else:
             return self.f_Hofz(byref(c_double(z)))
+    
+    def ddamping_da(a):
+        return self.f_ddamping_da(byref(c_double(a)))
 
     @overload
     def hubble_parameter(self, z: float) -> float: ...

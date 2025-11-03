@@ -115,7 +115,7 @@
 
     procedure(obj_function), private :: dtauda
 
-    public cmbmain, TimeSourcesToCl, ClTransferToCl, InitVars, GetTauStart, CAMBmain_Free !InitVars for BAO hack
+    public cmbmain, TimeSourcesToCl, ClTransferToCl, InitVars, GetTauStart, CAMBmain_Free, TransferOut !InitVars for BAO hack
 
     contains
 
@@ -147,6 +147,14 @@
     call InitVars(State) !Most of single thread time spent here (in InitRECFAST)
     if (global_error_flag/=0) return
 
+    if (State%CopyTimeSteps) then
+        call State%TimeOfzArr(State%CustomTimeSteps, State%z_out, State%nCustomTimeSteps)
+        ! write(*,*) "Custom time steps set to:", State%nCustomTimeSteps
+        ! write(*,*) "size of CustomTimeSteps:", size(State%CustomTimeSteps)
+    end if
+
+    ! write(*,*) "checkpoint cmbmain 1: InitVars done"
+
     if (DebugMsgs .and. Feedbacklevel > 0) then
         call Timer%WriteTime('Timing for InitVars')
         if (.not. State%flat) call WriteFormat('r = %f, scale = %f',State%curvature_radius, State%scale)
@@ -156,6 +164,7 @@
         CP%NonLinear==NonLinear_Lens .or. CP%NonLinear==NonLinear_both)) &
         call CP%InitPower%Init(CP)
     if (global_error_flag/=0) return
+    ! write(*,*) "checkpoint cmbmain 2: InitPower done"
 
     !Calculation of the CMB and other sources.
     if (CP%WantCls) then
@@ -168,11 +177,14 @@
             if (.not. allocated(TempSources)) allocate(TempSources)
             ThisSources => TempSources
         end if
+        ! write(*,*) "checkpoint cmbmain 2-1: before SetkValuesForSources done"
         call SetkValuesForSources
     end if
+    ! write(*,*) "checkpoint cmbmain 3: SetkValuesForSources done"
 
     if (CP%WantTransfer) call InitTransfer
 
+    ! write(*,*) "checkpoint cmbmain 4: InitTransfer done"
     !***note that !$ is the prefix for conditional multi-processor compilation***
     !$ if (ThreadNum /=0) call OMP_SET_NUM_THREADS(ThreadNum)
 
@@ -193,11 +205,22 @@
         ThisCT%NumSources = ThisSources%SourceNum
         call ThisCT%ls%Init(State,CP%Min_l, maximum_l)
 
+        ! if calc source or not
+        ! Skip this step when doing it for the geo H(z)
+        ! Need to calculate the sources for growth H(z)
+        if (State%calc_source) then
+        ! write(*,*) 'calc_source=true, Calculating sources for CMB'
+
         !$OMP PARALLEL DO DEFAULT(SHARED),SCHEDULE(DYNAMIC), PRIVATE(EV, q_ix)
         do q_ix= ThisSources%Evolve_q%npoints,1,-1
+            ! write(*,*) "For DoSourcek, q_ix=", q_ix
             if (global_error_flag==0) call DoSourcek(EV,q_ix)
         end do
         !$OMP END PARALLEL DO
+
+        ! write(*,*) "kh out of DoSourcek", State%MT%TransferData(Transfer_kh,1,1)
+
+        end if ! calc_source
 
         if (DebugMsgs .and. Feedbacklevel > 0) call Timer%WriteTime('Timing for source calculation')
 
@@ -205,17 +228,25 @@
 
     ! If transfer functions are requested, set remaining k values and output
     if (CP%WantTransfer .and. global_error_flag==0) then
-        call TransferOut
+        if (.not. CP%WantSplitGeo) then
+            ! write(*,*) "cmbmain: CP%WantSplitGeo=False, call TransferOut"
+            call TransferOut
+        end if
         if (DebugMsgs .and. Feedbacklevel > 0) call Timer%WriteTime('Timing for transfer k values')
     end if
 
-    if (CP%WantTransfer .and. .not. State%OnlyTransfer .and. global_error_flag==0) &
-        call Transfer_Get_sigmas(State, State%MT)
+    if (CP%WantTransfer .and. .not. State%OnlyTransfer .and. global_error_flag==0) then
+        if (.not. CP%WantSplitGeo) then
+            ! write(*,*) "cmbmain: CP%WantSplitGeo=False, call Transfer_Get_sigmas"
+            call Transfer_Get_sigmas(State, State%MT)
+        end if
+    end if
 
     !     if CMB calculations are requested, calculate the Cl by
     !     integrating the sources over time and over k.
 
     if (CP%WantCls .and. (.not. CP%WantScalars .or. .not. State%HasScalarTimeSources)) then
+        ! write(*,*) "cmbmain: at the end, call TimeSourcesToCl"
         call TimeSourcesToCl(ThisCT)
 
         if (CP%WantScalars) then
@@ -235,10 +266,36 @@
     Type(ClTransferData) :: ThisCT
     integer q_ix
     Type(TTimer) :: Timer
+    integer :: itau, iq
+    real(dl) :: stau, sq, ang_dist
 
     if (CP%WantScalars) ThisSources => State%ScalarTimeSources
 
     if (DebugMsgs .and. Feedbacklevel > 0) call Timer%Start()
+
+    ! multiplicate back the geometry factor to the polarization and lensing sources
+    ! If split geo and growth, the geometry factor is divided out in the source computation
+    if (CP%WantSplitGeo) then
+        ! write(*,*) "SplitGeo is True, checkpoint 3"
+        do itau = 1, State%TimeSteps%npoints
+            stau = State%TimeSteps%points(itau)
+            ang_dist = f_k(State%tau0-stau)
+            do iq = 1, ThisSources%Evolve_q%npoints
+                sq = ThisSources%Evolve_q%points(iq)
+
+                ! re-apply the geometry factor to the polarization sources
+                if (stau < State%tau0) &
+                    ThisSources%LinearSrc(iq, 2, itau) = ThisSources%LinearSrc(iq, 2, itau)/(ang_dist**2)
+
+                ! re-apply the geometry factor to the lensing sources
+                if (stau>State%tau_maxvis .and. State%tau0-stau > 0.1_dl) &
+                    ThisSources%LinearSrc(iq, 3, itau) = ThisSources%LinearSrc(iq, 3, itau)*f_K(stau-State%tau_maxvis) &
+                                                            /(f_K(State%tau0-State%tau_maxvis)*ang_dist)
+            end do
+        end do
+    end if
+
+    ! write(*,*) "TimeSourcesToCl: checkpoint 4"
 
     if (CP%WantScalars .and. WantLateTime &
         .and. (CP%NonLinear==NonLinear_Lens .or. CP%NonLinear==NonLinear_both) .and. global_error_flag==0) then
@@ -247,6 +304,8 @@
     else
         ScaledSrc => ThisSources%LinearSrc
     end if
+
+    ! write(*,*) "TimeSourcesToCl: checkpoint 5"
 
     if (global_error_flag==0) then
         call InitSourceInterpolation
@@ -564,13 +623,13 @@
         k_per_logint =CP%Transfer%k_per_logint
         if (CP%Transfer%high_precision) boost = boost*1.5
 
-        q_switch_lowk1 = 0.7/State%taurst
+        q_switch_lowk1 = 0.7/State%taurst !_geo
         dlog_lowk1=max(2*boost, k_per_logint)
 
-        q_switch_lowk = 8/State%taurst
+        q_switch_lowk = 8/State%taurst !_geo
         dlog_lowk=max(8*boost*2.5, k_per_logint)
 
-        q_switch_osc = min(CP%Transfer%kmax,30/State%taurst)
+        q_switch_osc = min(CP%Transfer%kmax,30/State%taurst) !_geo)
         d_osc= 200*boost*1.8
 
         if (CP%Transfer%k_per_logint>0) then
@@ -580,7 +639,7 @@
         end if
 
         dlog_osc = max(17*boost, k_per_logint)
-        q_switch_highk = min(CP%Transfer%kmax,90/State%taurst)
+        q_switch_highk = min(CP%Transfer%kmax,90/State%taurst) !_geo)
 
         !Then up to kmax
         dlog_highk = max(3*boost,k_per_logint)
@@ -627,6 +686,8 @@
             MT%num_q_trans = MT%num_q_trans + nq
         end if
 
+        ! write(*,*) "InitTransfer1: MT%num_q_trans =", MT%num_q_trans
+
     else
         !Fixed spacing
         MT%num_q_trans=int((log(CP%Transfer%kmax)-log(qmin))*CP%Transfer%k_per_logint)+1
@@ -665,8 +726,10 @@
         end do
 
         if (first_i > ntodo) then
+            ! write(*,*) "InitTransfer: equal to Evolve_q%npoints"
             MT%num_q_trans = ThisSources%Evolve_q%npoints
         else
+            ! write(*,*) "InitTransfer: more than Evolve_q%npoints"
             MT%num_q_trans = ThisSources%Evolve_q%npoints + (ntodo - first_i+1)
         end if
         call Transfer_Allocate(MT,State)
@@ -727,7 +790,14 @@
 
     call GetNumEqns(EV)
 
-    if (CP%WantScalars .and. global_error_flag==0) call CalcScalarSources(EV,taustart)
+    if (CP%WantScalars .and. global_error_flag==0) then
+        if (CP%WantSplitGeo) then
+            ! write(*,*) "want split geo, use custom timesteps for source calculation"
+            call CalcScalarSources2(EV,taustart)
+        else
+            call CalcScalarSources(EV,taustart)
+        end if
+    end if
     if (CP%WantVectors .and. global_error_flag==0) call CalcVectorSources(EV,taustart)
     if (CP%WantTensors .and. global_error_flag==0) call CalcTensorSources(EV,taustart)
 
@@ -755,8 +825,13 @@
 
     if (allocated(ThisSources%LinearSrc)) &
         deallocate(ThisSources%LinearSrc)
-    allocate(ThisSources%LinearSrc(ThisSources%Evolve_q%npoints,&
-        ThisSources%SourceNum,State%TimeSteps%npoints), source=0._dl, stat=err)
+    if (CP%WantSplitGeo .and. State%CopyTimeSteps) then
+        allocate(ThisSources%LinearSrc(ThisSources%Evolve_q%npoints,&
+            ThisSources%SourceNum,State%nCustomTimeSteps), source=0._dl, stat=err)
+    else
+        allocate(ThisSources%LinearSrc(ThisSources%Evolve_q%npoints,&
+            ThisSources%SourceNum,State%TimeSteps%npoints), source=0._dl, stat=err)
+    end if
     if (err/=0) call GlobalError('Sources requires too much memory to allocate', &
         error_unsupported_params)
 
@@ -776,8 +851,8 @@
 
     ! Maximum and minimum k-values.
     if (State%flat) then
-        qmax=maximum_qeta/State%tau0
-        qmin=qmin0/State%tau0/initAccuracyBoost
+        qmax=maximum_qeta/State%tau0  !_geo
+        qmin=qmin0/State%tau0/initAccuracyBoost  !_geo
     else
         qmax=maximum_qeta/State%curvature_radius/State%chi0
         qmin=qmin0/State%curvature_radius/State%chi0/initAccuracyBoost
@@ -816,6 +891,10 @@
     !     saved in order to do the integration. So TimeSteps is set here.
     !These routines in ThermoData (modules.f90)
     call State%ThermoData%Init(State,taumin)
+    if (.not. State%CP%WantSplitGeo) then
+            ! write(*,*) "WantSplitGeo = False, copy taurst to taurst_geo in OutData when InitVars"
+            State%taurst_geo = State%taurst
+        end if
     if (global_error_flag/=0) return
 
     if (DebugMsgs .and. Feedbacklevel > 0) write (*,*) 'ThermoData.Init'
@@ -839,8 +918,12 @@
         if (allocated(State%Transfer_times)) deallocate(State%Transfer_times)
         !allocate even if no transfer to prevent debugging access errors
         allocate(State%Transfer_Times(0:State%num_transfer_redshifts+1))
-        if (CP%WantTransfer) &
+        ! write(*,*) "State%num_transfer_redshifts=",State%num_transfer_redshifts
+        ! write(*,*) "State%Transfer_redshifts=",State%Transfer_redshifts
+        if (CP%WantTransfer) then
             call State%TimeOfzArr(State%Transfer_times(1:),  State%Transfer_redshifts, State%num_transfer_redshifts)
+            ! write(*,*) "State%Transfer_times=",State%Transfer_times
+        end if
     endif
 
     end subroutine InitVars
@@ -865,8 +948,10 @@
 
     if (CP%Accuracy%AccurateReionization) dlnk0 = dlnk0/2
 
-    dkn1=0.6_dl/State%taurst/SourceAccuracyBoost
-    dkn2=0.9_dl/State%taurst/SourceAccuracyBoost/1.2
+    ! write(*,*) "SetkValuesForSources checkpoint1"
+
+    dkn1=0.6_dl/State%taurst_geo/SourceAccuracyBoost
+    dkn2=0.9_dl/State%taurst_geo/SourceAccuracyBoost/1.2
     if (CP%WantTensors .or. CP%WantVectors) then
         dkn1=dkn1  *0.8_dl
         dlnk0=dlnk0/2 !*0.3_dl
@@ -874,11 +959,11 @@
     end if
 
     qmax_log = dkn1/dlnk0
-    q_switch = 2*6.3/State%taurst
+    q_switch = 2*6.3/State%taurst_geo
     !Want linear spacing for wavenumbers which come inside horizon
     !Could use sound horizon, but for tensors that is not relevant
 
-    q_cmb = 2*l_smooth_sample/State%chi0*SourceAccuracyBoost  !assume everything is smooth at l > l_smooth_sample
+    q_cmb = 2*l_smooth_sample/State%chi0_geo*SourceAccuracyBoost  !assume everything is smooth at l > l_smooth_sample
     if (CP%Want_CMB .and. maximum_l > 5000 .and. CP%Accuracy%AccuratePolarization) q_cmb = q_cmb*1.4
     q_cmb = max(q_switch*2, q_cmb)
     !prevent EE going wild in tail
@@ -1039,6 +1124,91 @@
 
     end subroutine CalcScalarSources
 
+    subroutine CalcScalarSources2(EV,taustart)
+    use FileUtils
+    use MpiUtils
+    implicit none
+    type(EvolutionVars) EV
+    real(dl) tau,tol1,tauend, taustart
+    integer j,ind,itf !,nsteps
+    real(dl) c(24),w(EV%nvar,9), y(EV%nvar), sources(ThisSources%SourceNum)
+    !real(dl) CustomTimeStep(nsteps)
+
+    w=0
+    y=0
+    call initial(EV,y, taustart)
+    if (global_error_flag/=0) return
+
+    ! write(*,*) "CalcScalarSources2: checkpoint1"
+
+    tau=taustart
+    ind=1
+
+    ! write(*,*) "CalcScalarSources2:", State%Transfer_Times
+
+    !     Begin timestep loop.
+    itf=1
+    tol1=base_tol/exp(CP%Accuracy%AccuracyBoost*CP%Accuracy%IntTolBoost-1)
+    ! write(*,*) "CalcScalarSources2: allocated(MT%TransferData)=",allocated(State%MT%TransferData)
+    ! write(*,*) "CustomTimeStep(2))=",State%CustomTimeSteps(2)
+    if (CP%WantTransfer) then
+        if  (CP%Transfer%high_precision) tol1=tol1/100
+        do while (itf <= State%num_transfer_redshifts .and. State%CustomTimeSteps(2) > State%Transfer_Times(itf))
+            ! write(*,*) "CalcScalarSources2: outtransf at itf=",itf, " tau=", State%Transfer_Times(itf)
+            !Just in case someone wants to get the transfer outputs well before recombination
+            call GaugeInterface_EvolveScal(EV,tau,y,State%Transfer_Times(itf),tol1,ind,c,w)
+            if (global_error_flag/=0) return
+            ! write(*,*) "CalcScalarSources2: outtransf at itf=",itf
+            call outtransf(EV,y, tau, State%MT%TransferData(:,EV%q_ix,itf))
+            itf = itf+1
+        end do
+    end if
+
+    ! write(*,*) "CalcScalarSources2: checkpoint2"
+
+    do j=2,State%nCustomTimeSteps !State%TimeSteps%npoints
+        ! tauend=State%TimeSteps%points(j)
+        tauend=State%CustomTimeSteps(j)
+
+        if (.not. DebugEvolution .and. (EV%q*tauend > max_etak_scalar .and. tauend > State%taurend) &
+            .and. .not. WantLateTime .and. (.not.CP%WantTransfer.or.tau > State%Transfer_Times(State%num_transfer_redshifts))) then
+            ThisSources%LinearSrc(EV%q_ix,:,j)=0
+        else
+            !Integrate over time, calulate end point derivs and calc output
+            call GaugeInterface_EvolveScal(EV,tau,y,tauend,tol1,ind,c,w)
+            if (global_error_flag/=0) return
+
+            call output(EV,y,j, tau,sources, CP%CustomSources%num_custom_sources)
+            ThisSources%LinearSrc(EV%q_ix,:,j)=sources
+
+            !     Calculation of transfer functions.
+101         if (CP%WantTransfer.and.itf <= State%num_transfer_redshifts) then
+                if (j < State%nCustomTimeSteps) then
+                    if (tauend < State%Transfer_Times(itf) .and. State%CustomTimeSteps(j+1)  > State%Transfer_Times(itf)) then
+                        call GaugeInterface_EvolveScal(EV,tau,y,State%Transfer_Times(itf),tol1,ind,c,w)
+                        if (global_error_flag/=0) return
+                    endif
+                end if
+                !     output transfer functions for this k-value.
+
+                if (abs(tau-State%Transfer_Times(itf)) < 1.e-5_dl .or. j==State%nCustomTimeSteps) then
+                    call outtransf(EV,y, tau, State%MT%TransferData(:,EV%q_ix,itf))
+                    itf=itf+1
+                    if (j < State%nCustomTimeSteps) then
+                        if (itf <= State%num_transfer_redshifts.and. &
+                           State%CustomTimeSteps(j+1) > State%Transfer_Times(itf)) goto 101
+                    else
+                        if (abs(tau-State%Transfer_Times(itf-1)) > 5.e-5_dl) then
+                            write(*,*) 'WARNING: mismatch in integrated times (CAMB: CalcScalarSources)'
+                        end if
+                    end if
+                endif
+            end if
+        end if
+    end do !time step loop
+
+    end subroutine CalcScalarSources2
+
 
     subroutine CalcTensorSources(EV,taustart)
     implicit none
@@ -1164,9 +1334,14 @@
     real(dl) ho,a0,b0, ascale
     integer tf_lo, tf_hi
 
+    ! write(*,*) "MakeNonlinearSources checkpoint1"
+
     if (allocated(State%CAMB_Pk)) deallocate(State%CAMB_PK)
     allocate(State%CAMB_PK)
+    ! write(*,*) "State%MT%num_q_trans =", State%MT%num_q_trans
     call Transfer_GetMatterPowerData(State, State%MT, State%CAMB_PK)
+
+    ! write(*,*) "MakeNonlinearSources checkpoint2"
 
     call CP%NonLinearModel%GetNonLinRatios(State, State%CAMB_PK)
     first_step=1
@@ -1174,6 +1349,8 @@
         first_step = first_step + 1
     end do
     allocate(ScaledSrc, source = ThisSources%LinearSrc)
+
+    ! write(*,*) "MakeNonlinearSources checkpoint2"
 
     !$OMP PARALLEL DO DEFAULT(SHARED), SCHEDULE(STATIC), &
     !$OMP & PRIVATE(i, scaling, ddScaling, tf_lo, tf_hi, tau, ho, a0, b0, ascale)

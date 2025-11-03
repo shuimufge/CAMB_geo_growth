@@ -2758,18 +2758,32 @@
             quadrupole_source = (5.0d0/8.0d0)*(3*polter*ddvisibility + 6*polterdot*dvisibility &
                 + (k**2*polter + 3*polterddot)*visibility)/k**2
 
+            ! if (State%CP%want_mono) EV%OutputSources(1) = EV%OutputSources(1) + monopole_source
+            ! if (State%CP%want_doppler) EV%OutputSources(1) = EV%OutputSources(1) + doppler
+            ! if (State%CP%want_isw) EV%OutputSources(1) = EV%OutputSources(1) + ISW
+            ! if (State%CP%want_quad) EV%OutputSources(1) = EV%OutputSources(1) + quadrupole_source
             EV%OutputSources(1) = ISW + doppler + monopole_source + quadrupole_source
             ang_dist = f_K(tau0-tau)
             if (tau < tau0) then
                 !E polarization source
-                EV%OutputSources(2)=visibility*polter*(15._dl/8._dl)/(ang_dist**2*k2)
+                if (CP%WantSplitGeo) then
+                    ! get rid of the geometric factor for perturbation sources
+                    EV%OutputSources(2)=visibility*polter*(15._dl/8._dl)/(k2)
+                else
+                    EV%OutputSources(2)=visibility*polter*(15._dl/8._dl)/(ang_dist**2*k2)
+                end if
                 !factor of four because no 1/16 later
             end if
 
             if (size(EV%OutputSources) > 2) then
                 !Get lensing sources
                 if (tau>State%tau_maxvis .and. tau0-tau > 0.1_dl) then
-                    EV%OutputSources(3) = -2*phi*f_K(tau-State%tau_maxvis)/(f_K(tau0-State%tau_maxvis)*ang_dist)
+                    if (CP%WantSplitGeo) then
+                    ! get rid of the geometric factor for perturbation sources
+                        EV%OutputSources(3) = -2*phi
+                    else
+                        EV%OutputSources(3) = -2*phi*f_K(tau-State%tau_maxvis)/(f_K(tau0-State%tau_maxvis)*ang_dist)
+                    end if
                     !We include the lensing factor of two here
                 end if
             end if

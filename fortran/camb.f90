@@ -26,17 +26,28 @@
     if (allocated(Cdata%CAMB_Pk)) deallocate(Cdata%CAMB_PK)
 
     if (CData%CP%WantCls) then
+        ! write(*,*) "TransfersToPowers: checkpoint 1"
+        ! write(*,*) "TransfersToPowers: allocated(CData%ScalarTimeSources) =", allocated(CData%ScalarTimeSources)
+        ! write(*,*) "TransfersToPowers: CData%CP%WantScalars =", CData%CP%WantScalars
+        if (CData%CP%WantSplitGeo) then
+            ! call TransferOut to fill the extra kh in the MT%TransferData
+            ! write(*,*) "TransfersToPowers: CP%WantSplitGeo=True, call TransferOut"
+            call TransferOut
+        end if
         if (allocated(CData%ScalarTimeSources) .and. CData%CP%WantScalars) then
             want_tensors = CData%CP%WantTensors
             want_vectors = CData%CP%WantVectors
             Cdata%OnlyTransfer = .true. !prevent ClTransferToCl
             Cdata%CP%WantTensors = .false.
             CData%CP%WantVectors = .false.
+            ! write(*,*) "TransfersToPowers: checkpoint 2"
             call TimeSourcesToCl(CData%ClData%CTransScal)
             Cdata%CP%WantTensors = want_tensors
             CData%CP%WantVectors = want_vectors
             Cdata%OnlyTransfer = .false.
         end if
+        ! write(*,*) "TransfersToPowers: checkpoint 3"
+        ! write(*,*) "TransfersToPowers: CData%CLData%CTransScal%limber_l_min=", CData%CLData%CTransScal%limber_l_min
         call ClTransferToCl(CData)
         if (CData%CP%DoLensing .and. global_error_flag==0) call lens_Cls(Cdata)
         if (global_error_flag/=0) return
@@ -51,12 +62,16 @@
     use CAMBmain
     use lensing
     use Bispectrum
-    type(CAMBdata)  :: OutData
+    ! OutData is the final output of the CAMBdata object as well as the geo H(z) object
+    ! TempData is the one for calculating the sources with growth H(z)
+    type(CAMBdata)  :: OutData, TempData
     type(CAMBparams) :: Params
     integer, optional :: error !Zero if OK
     logical, optional :: onlytransfer, onlytimesources
     type(CAMBparams) P
     logical :: call_again
+    ! real(dl), allocatable :: z_out(:)
+    integer :: i, err
 
     global_error_flag = 0
     call_again = .false.
@@ -105,8 +120,114 @@
             (P%DoLensing .or. OutData%num_redshiftwindows > 0)) then
             P%WantTransfer  = .true.
         end if
+
         call OutData%SetParams(P)
+        OutData%tau0_geo = OutData%tau0
+        OutData%chi0_geo = OutData%chi0
+        OutData%CP%omnuh2_growth = OutData%CP%omnuh2
+        OutData%omega_de_growth = OutData%omega_de
+        ! write(*,*) "GetResults: OutData%CP%omnuh2_growth=", OutData%CP%omnuh2_growth
+        ! write(*,*) "GetResults: OutData%omega_de_growth=", OutData%omega_de
+
+        ! if want split geo and growth, both OutData and TempData needs initiated
+        ! OutData contains geometry only and the background variables
+        ! TempData will actually compute and contain the perturbative quanties and sources
+        ! Then the sources will be passed from TempData to OutData
+        if (Params%WantSplitGeo) then
+            ! write(*,*) "SplitGeo is True, checkpoint 1"
+            ! At the beginning, we need to initial the thermo history of both OutData and TempData to get the tau
+            ! This is related to the timestep and kstep in the Cl integration
+            ! We initiate the thermo history of OutData first
+            OutData%calc_source = .false.
+            call cmbmain
+
+            ! write(*,*) "SplitGeo is True, finish OutData initialization"
+
+            call TempData%Free()
+            call SetActiveState(TempData)
+            TempData%calc_source = .true.
+            ! write(*,*) "TempData%calc_source =", TempData%calc_source
+            P = Params
+            P%Max_eta_k=max(min(P%max_l,3000)*2.5_dl,P%Max_eta_k)
+            P%WantTensors = .false.
+            P%WantVectors = .false.
+            if ((P%NonLinear==NonLinear_lens .or. P%NonLinear==NonLinear_both) .and. &
+                (P%DoLensing .or. State%num_redshiftwindows > 0)) then
+                P%WantTransfer  = .true.
+            end if
+
+            ! Set the neutrino hierarchy and number of massive neutrinos for omnuh2_growth
+            call P%SetNeutrinoHierarchy(P%omnuh2_growth, 0._dl, P%nnu, P%neutrino_hierarchy, P%num_massive_neutrinos)
+            call TempData%SetParams(P)
+            TempData%HasScalarTimeSources= DefaultFalse(onlytimesources)
+            TempData%OnlyTransfer = DefaultFalse(onlytransfer) .or. TempData%HasScalarTimeSources
+            TempData%tau0_geo = OutData%tau0
+            TempData%chi0_geo = OutData%chi0
+            TempData%taurst_geo = OutData%taurst
+            ! write(*,*) "SplitGeo is True, checkpoint 2"
+            ! pass the omnuh2 and Omega_de from growth to geo, since it is needed for nonlinear fitting
+            OutData%CP%omnuh2_growth = TempData%CP%omnuh2
+            OutData%omega_de_growth = TempData%omega_de
+            ! write(*,*) "SplitGeo is True, checkpoint 3"
+            ! create TempData%CustomTimeSteps = OutData%TimeSteps%points
+            if (allocated(TempData%CustomTimeSteps)) deallocate(TempData%CustomTimeSteps)
+            allocate(TempData%CustomTimeSteps(OutData%TimeSteps%npoints), source=0._dl)
+            TempData%nCustomTimeSteps = OutData%TimeSteps%npoints
+            ! write(*,*) "SplitGeo is True, checkpoint 3"
+            ! convert OutData conformal time to redshift, then convert it to TempData conformal time
+            if (allocated(TempData%z_out)) deallocate(TempData%z_out)
+            allocate(TempData%z_out(OutData%TimeSteps%npoints))
+            ! Convert the OutData%TimeSteps%points to redshift
+            ! write(*,*) "SplitGeo is True, checkpoint 4"
+            call OutData%RedshiftAtTimeArr(TempData%z_out, OutData%TimeSteps%points, OutData%TimeSteps%npoints)
+            ! write(*,*) "SplitGeo is True, checkpoint 5"
+            TempData%CopyTimeSteps = .true.
+            ! Now z_out stores the redshift at each time step of OutData
+            ! Then we can conver the redshift to conformal time of TempData
+            ! This one needs to init thermo, so this is moved to the cmbmain func after calling InitVar
+            ! call TempData%TimeOfzArr(TempData%CustomTimeSteps, TempData%z_out, TempData%nCustomTimeSteps)
+            ! write(*,*) "SplitGeo is True, checkpoint 6"
+        end if
+
+        ! if Params%WantSplitGeo == true, this is computing the sources in TempData
+        ! else, this is normal computation of OutData
         if (global_error_flag==0) call cmbmain
+
+        ! copy the computed linear source from TempData to OutData
+        ! Also adding the geomotrical factor to E source and phi source back in here.
+        if (Params%WantSplitGeo) then
+            ! write(*,*) "SplitGeo is True, checkpoint 7"
+            ! copy the TempData%LinearSrc to OutData%LinearSrc
+            ! if allocated(OutData%ScalarTimeSources) deallocate(OutData%ScalarTimeSources)
+            ! allocate(OutData%ScalarTimeSources)
+            ! write(*,*) "GetResult1: allocated(OutData%ScalarTimeSources) =", allocated(OutData%ScalarTimeSources)
+            if (allocated(OutData%ScalarTimeSources%LinearSrc)) deallocate(OutData%ScalarTimeSources%LinearSrc)
+            allocate(OutData%ScalarTimeSources%LinearSrc(OutData%ScalarTimeSources%Evolve_q%npoints, &
+                OutData%ScalarTimeSources%SourceNum, OutData%TimeSteps%npoints), &
+                source=TempData%ScalarTimeSources%LinearSrc, stat = err)
+            if (err/=0) call GlobalError('CAMB_GetResult: Sources requires too much memory to allocate', &
+                error_unsupported_params)
+
+            ! copy the TempData%MT to OutData%MT
+            OutData%MT = TempData%MT
+            ! write(*,*) "GetResult: TempData%ScalarTimeSources%Evolve_q%npoints =", TempData%ScalarTimeSources%Evolve_q%npoints
+            ! write(*,*) "GetResult: TempData%MT%num_q_trans =", TempData%MT%num_q_trans
+            ! do i = 1, TempData%MT%num_q_trans
+            !     write(*,*)  TempData%MT%q_trans(i)
+            ! end do 
+            ! write(*,*) "GetResult: OutData%MT%num_q_trans =", OutData%MT%num_q_trans
+            ! write(*,*) "GetResult: shape of OutData%MT%TransferData: ", size(OutData%MT%TransferData)
+            ! write(*,*) "GetResult2: allocated(OutData%ScalarTimeSources) =", allocated(OutData%ScalarTimeSources)
+            call SetActiveState(OutData)
+        end if
+        ! write(*,*) "GetResult: OutData%ScalarTimeSources%Evolve_q%npoints =", OutData%ScalarTimeSources%Evolve_q%npoints
+        ! write(*,*) "GetResult: OutData%MT%num_q_trans =", OutData%MT%num_q_trans
+        ! do i = 1, OutData%MT%num_q_trans
+        !     write(*,*)  OutData%MT%q_trans(i)
+        ! end do 
+        ! write(*,*) "GetResult: checkpoint 2"
+
+
         if (global_error_flag/=0) then
             if (present(error)) error =global_error_flag
             return
@@ -116,6 +237,7 @@
 
 
     if (Params%WantTransfer .and. .not. (Params%WantCls .and. Params%WantScalars)) then
+        ! write(*,*) "GetResult: checkpoint 3"
         P=Params
         P%WantCls = .false.
         P%WantScalars = .false.
@@ -139,6 +261,7 @@
     OutData%CP%WantDerivedParameters = Params%WantDerivedParameters
 
     if (.not. OutData%OnlyTransfer .and. Params%WantCls .and. Params%WantScalars) then
+        ! write(*,*) "GetResult: checkpoint 4"
         if (Params%DoLensing .and. global_error_flag==0) then
             call lens_Cls(OutData)
         end if
@@ -147,6 +270,7 @@
             call GetBispectrum(OutData,OutData%CLData%CTransScal)
     end if
     if (global_error_flag/=0 .and. present(error)) error =global_error_flag
+    ! write(*,*) "GetResult: checkpoint 5"
 
     end subroutine CAMB_GetResults
 
@@ -263,6 +387,7 @@
     P%WantScalars = Ini%Read_Logical('get_scalar_cls')
     P%WantVectors = Ini%Read_Logical('get_vector_cls', .false.)
     P%WantTensors = Ini%Read_Logical('get_tensor_cls', .false.)
+    P%WantSplitGeo = Ini%Read_Logical('want_split_geo', .false.)
 
     P%Want_CMB =  Ini%Read_Logical('want_CMB',.true.)
     P%Want_CMB_lensing =  P%Want_CMB .or. Ini%Read_Logical('want_CMB_lensing',.true.)
@@ -422,6 +547,7 @@
         P%ombh2 = Ini%Read_Double('ombh2')
         P%omch2 = Ini%Read_Double('omch2')
         P%omnuh2 = Ini%Read_Double('omnuh2')
+        P%omnuh2_growth = Ini%Read_Double('omnuh2_growth', P%omnuh2)
         P%omk = Ini%Read_Double('omk')
     else
         ErrMsg = 'use_physical = F no longer supported. Use ombh2, omch2, omnuh2, omk'
@@ -728,7 +854,8 @@
         return
     end if
 
-    if (global_error_flag==0) call CAMB_GetResults(State,P)
+    if (global_error_flag==0) call CAMB_GetResults(State,P,global_error_flag,.true., .true.)
+    if (global_error_flag==0) call CAMB_TransfersToPowers(State)
     if (global_error_flag/=0) then
         ErrMsg =  trim(global_error_message)
         return

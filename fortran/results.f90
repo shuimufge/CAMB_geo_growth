@@ -176,10 +176,12 @@
         !     adotrad - a(tau) in radiation era
         real(dl) grhocrit,grhog,grhor,grhob,grhoc,grhov,grhornomass,grhok
         real(dl) taurst,dtaurec,taurend,tau_maxvis,adotrad
+        real(dl) taurst_geo
 
-        real(dl) Omega_de
+        real(dl) Omega_de, Omega_de_growth
         real(dl) curv, curvature_radius, Ksign !curvature_radius = 1/sqrt(|curv|), Ksign = 1,0 or -1
         real(dl) tau0,chi0 !time today and rofChi(tau0/curvature_radius)
+        real(dl) tau0_geo,chi0_geo
         real(dl) scale !relative to flat. e.g. for scaling lSamp%l sampling.
 
         real(dl) akthom !sigma_T * (number density of protons now)
@@ -236,6 +238,12 @@
 
         Type(TTimeSources), allocatable :: ScalarTimeSources
         integer :: Scalar_C_last = C_PhiE
+
+        double precision, dimension(:), allocatable :: CustomTimeSteps
+        integer :: nCustomTimeSteps = 0
+        logical :: calc_source = .true.
+        real(dl), allocatable :: z_out(:)
+        logical :: CopyTimeSteps = .false.
 
 
     contains
@@ -570,6 +578,7 @@
         write(*,'("Om_b h^2             = ",f9.6)') P%ombh2
         write(*,'("Om_c h^2             = ",f9.6)') P%omch2
         write(*,'("Om_nu h^2            = ",f9.6)') P%omnuh2
+        write(*,'("Om_nu h^2 growth     = ",f9.6)') P%omnuh2_growth
         write(*,'("Om_darkenergy        = ",f9.6)') this%Omega_de
         write(*,'("Om_K                 = ",f9.6)') P%omk
         write(*,'("Om_m (inc Om_u)      = ",f9.6)') (P%ombh2+P%omch2+P%omnuh2)/h2
@@ -1172,6 +1181,18 @@
 
     end function ddamping_da
 
+    function CAMBData_ddamping_da(this, a)
+    class(CAMBdata) :: this
+    real(dl) :: CAMBData_ddamping_da
+    real(dl), intent(in) :: a
+    real(dl) :: R
+
+    R=this%ThermoData%r_drag0*a
+    !ignoring reionisation, not relevant for distance measures
+    CAMBData_ddamping_da = (R**2 + 16*(1+R)/15)/(1+R)**2*dtauda(this,a)*a**2/(this%CP%Recomb%x_e(a)*this%akthom)
+
+    end function CAMBData_ddamping_da
+
     function noreion_doptdepth_dz(this,z)
     class(CAMBdata) :: this
     real(dl) :: noreion_doptdepth_dz
@@ -1727,7 +1748,7 @@
     end if
     !Higher q starts earlier; scale by log(taumin) so actual step size is not made worse by increasing k_max
     nthermo = nint(thermal_history_def_timesteps*log(1.4e4/taumin)/log(1.4e4/2e-4)*background_boost)
-    this%tauminn=0.95d0*taumin
+    this%tauminn=0.8d0*taumin
     this%dlntau=log(State%tau0/this%tauminn)/(nthermo-1)
 
     do RW_i = 1, State%num_redshiftwindows
@@ -2265,6 +2286,10 @@
     end if
 
     this%HasThermoData = .true.
+
+    if (.not. State%calc_source) then
+        State%taurst_geo = State%taurst
+    end if
     end subroutine Thermo_Init
 
 
@@ -3200,7 +3225,12 @@
         itf_end = nz
     end if
     PK_data%num_k = MTrans%num_q_trans
+    ! write(*,*) "GetMatterPowerData: MTrans%num_q_trans =", MTrans%num_q_trans
+    ! write(*,*) "GetMatterPowerData: shape of MTrans%TransferData =", size(MTrans%TransferData)
     PK_Data%num_z = nz
+    ! write(*,*) "nz =", nz
+
+    ! write(*,*) "GetMatterPowerData, checkpoint 1"
 
     allocate(PK_data%matpower(PK_data%num_k,nz))
     allocate(PK_data%ddmat(PK_data%num_k,nz))
@@ -3209,17 +3239,26 @@
     allocate(PK_data%redshifts(nz))
     PK_data%redshifts = State%Transfer_Redshifts(itf_start:itf_end)
 
+    ! write(*,*) "PK_data%redshifts =", PK_data%redshifts
+
+    ! write(*,*) "GetMatterPowerData, checkpoint 2"
+
     h = State%CP%H0/100
 
     do ik=1,MTrans%num_q_trans
         kh = MTrans%TransferData(Transfer_kh,ik,1)
+        ! write(*,*) "ik=", ik, " kh=", kh
         k = kh*h
         PK_data%log_kh(ik) = log(kh)
         power = State%CP%InitPower%ScalarPower(k)
         if (global_error_flag/=0) then
+            ! write(*,*) "Transfer_GetMatterPowerData: Error in k=", k
             call MatterPowerdata_Free(PK_data)
             return
         end if
+
+        ! write(*,*) "GetMatterPowerData, checkpoint 3"
+
         do itf = 1, nz
             PK_data%matpower(ik,itf) = &
                 log(MTrans%TransferData(s1,ik,itf_start+itf-1)*&
@@ -3227,6 +3266,8 @@
                 *const_pi*const_twopi*h**3*power)
         end do
     end do
+
+    ! write(*,*) "GetMatterPowerData, checkpoint 4"
 
     call MatterPowerdata_getsplines(PK_data)
 

@@ -124,6 +124,8 @@
         logical   :: want_zstar = .false.
         logical   :: want_zdrag = .false.     !!JH for updated BAO likelihood.
 
+        logical   :: WantSplitGeo = .false. ! if split geo and growth in omnuh2
+
         integer   :: Min_l = 2 ! 1 or larger, usually 1 or 2
         integer   :: Max_l = 2500
         integer   :: Max_l_tensor = 600
@@ -136,9 +138,13 @@
         real(dl)  :: omch2 = 0._dl !cold dark matter density Omega_c h^2
         real(dl)  :: omk = 0._dl !Omega_K
         real(dl)  :: omnuh2 = 0._dl !massive neutino Omega_nu h^2
+        real(dl)  :: omnuh2_growth = 0._dl
+        real(dl)  :: nnu = 3.044_dl !number of neutrino species
         real(dl)  :: H0 = 67._dl !Hubble parameter in km/s/Mpc
         real(dl)  :: TCMB = COBE_CMBTemp
         real(dl)  :: Yhe = 0.24_dl
+        integer   :: neutrino_hierarchy = neutrino_hierarchy_degenerate
+        integer   :: num_massive_neutrinos = 1
         real(dl)  :: Num_Nu_massless = default_nnu
         integer   :: Num_Nu_massive = 0 !sum of Nu_mass_numbers below
         integer   :: Nu_mass_eigenstates = 0  !1 for degenerate masses

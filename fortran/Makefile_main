@@ -78,7 +78,7 @@ default: camb
 
 all: camb python libcamb
 Release: camb python
-Debug: camb python
+Debug: camb #python
 
 MAKEOPT ?= --no-print-directory
 
