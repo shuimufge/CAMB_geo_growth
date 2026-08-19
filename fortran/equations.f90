@@ -2758,11 +2758,11 @@
             quadrupole_source = (5.0d0/8.0d0)*(3*polter*ddvisibility + 6*polterdot*dvisibility &
                 + (k**2*polter + 3*polterddot)*visibility)/k**2
 
-            ! if (State%CP%want_mono) EV%OutputSources(1) = EV%OutputSources(1) + monopole_source
-            ! if (State%CP%want_doppler) EV%OutputSources(1) = EV%OutputSources(1) + doppler
-            ! if (State%CP%want_isw) EV%OutputSources(1) = EV%OutputSources(1) + ISW
-            ! if (State%CP%want_quad) EV%OutputSources(1) = EV%OutputSources(1) + quadrupole_source
-            EV%OutputSources(1) = ISW + doppler + monopole_source + quadrupole_source
+            if (State%CP%want_mono) EV%OutputSources(1) = EV%OutputSources(1) + monopole_source
+            if (State%CP%want_doppler) EV%OutputSources(1) = EV%OutputSources(1) + doppler
+            if (State%CP%want_isw) EV%OutputSources(1) = EV%OutputSources(1) + ISW
+            if (State%CP%want_quad) EV%OutputSources(1) = EV%OutputSources(1) + quadrupole_source
+            ! EV%OutputSources(1) = ISW + doppler + monopole_source + quadrupole_source
             ang_dist = f_K(tau0-tau)
             if (tau < tau0) then
                 !E polarization source

@@ -295,6 +295,10 @@ class CAMBparams(F2003Class):
         ("want_zstar", c_bool),
         ("want_zdrag", c_bool),
         ("WantSplitGeo", c_bool, "if the split of geo and growth in mnu is wanted"),
+        ("want_mono", c_bool, "if want to include monopole in source"),
+        ("want_doppler", c_bool, "if want to include doppler in source"),
+        ("want_isw", c_bool, "if want to include isw in source"),
+        ("want_quad", c_bool, "if want to include quadrupole in source"),
         ("min_l", c_int, "l_min for the scalar C_L (1 or 2, L=1 dipoles are Newtonian Gauge)"),
         ("max_l", c_int, "l_max for the scalar C_L"),
         ("max_l_tensor", c_int, "l_max for the tensor C_L"),
@@ -618,6 +622,10 @@ class CAMBparams(F2003Class):
         mnu=0.06,
         mnu_growth: float | None = None,
         WantSplitGeo = False, 
+        want_mono = True, 
+        want_doppler = True,
+        want_isw = True,
+        want_quad = True,
         nnu=constants.default_nnu,
         YHe: float | None = None,
         meffsterile=0.0,
@@ -721,6 +729,11 @@ class CAMBparams(F2003Class):
         omnuh2 = omnuh2 + omnuh2_sterile
         self.omnuh2 = omnuh2
         self.WantSplitGeo = WantSplitGeo
+        print("WantSplitGeo=", self.WantSplitGeo)
+        self.want_mono = want_mono
+        self.want_doppler = want_doppler
+        self.want_isw = want_isw
+        self.want_quad = want_quad
         if mnu_growth is not None:
             if omnuh2_growth and not num_massive_neutrinos:
                 raise CAMBError("non-zero mnu_growth with zero num_massive_neutrinos")

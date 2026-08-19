@@ -125,6 +125,10 @@
         logical   :: want_zdrag = .false.     !!JH for updated BAO likelihood.
 
         logical   :: WantSplitGeo = .false. ! if split geo and growth in omnuh2
+        logical   :: want_mono = .true.
+        logical   :: want_doppler = .true.
+        logical   :: want_isw = .true.
+        logical   :: want_quad = .true.
 
         integer   :: Min_l = 2 ! 1 or larger, usually 1 or 2
         integer   :: Max_l = 2500
