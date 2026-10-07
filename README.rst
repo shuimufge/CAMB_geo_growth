@@ -1,9 +1,43 @@
 ===================
 CAMB
 ===================
+
+About this fork
+=============================
+
+This is a modified version of CAMB, developed by Fei Ge for Ge et al. (in preparation).
+It branches from upstream CAMB at commit
+`96d6d44 <https://github.com/cmbant/CAMB/commit/96d6d44c1c5538efbb893859b737e30c2d64ac24>`_ (2025-07-07);
+all changes since then are shown in the
+`compare view <https://github.com/<USER>/<REPO>/compare/96d6d44...geo_growth>`_.
+For the official CAMB, see https://github.com/cmbant/CAMB.
+
+Modifications (branch ``geo_growth``):
+
+- **Separate neutrino density for geometry and growth.** With ``WantSplitGeo`` enabled, the background
+  geometry (conformal time, distances) uses ``omnuh2``, while perturbation sources, transfer functions
+  and Halofit use ``omnuh2_growth``.
+  Python: ``pars.set_cosmology(..., mnu=..., mnu_growth=...)``;
+- **Switches for CMB temperature source terms.** ``want_mono``, ``want_doppler``, ``want_isw`` and
+  ``want_quad`` (all default ``True``; ``set_cosmology`` arguments) turn individual contributions
+  to the temperature source on or off.
+
+To install this version::
+
+    git clone --recursive -b geo_growth https://github.com/<USER>/<REPO>
+    pip install -e ./<REPO>
+
+If you use this code, please cite Ge et al. (in preparation) and the CAMB papers
+(`Lewis, Challinor & Lasenby 2000 <https://arxiv.org/abs/astro-ph/9911177>`_;
+`Howlett et al. 2012 <https://arxiv.org/abs/1201.3654>`_).
+This is a modified version of CAMB, distributed under the CAMB licence (`LICENCE.txt <LICENCE.txt>`_).
+
+
+=============================
 :CAMB: Code for Anisotropies in the Microwave Background
 :Author: Antony Lewis and Anthony Challinor
 :Homepage: https://camb.info/
+=============================
 
 .. image:: https://img.shields.io/pypi/v/camb.svg?style=flat
    :target: https://pypi.python.org/pypi/camb/
