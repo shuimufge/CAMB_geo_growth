@@ -9,7 +9,7 @@ This is a modified version of CAMB, developed by Fei Ge for Ge et al. (in prepar
 It branches from upstream CAMB at commit
 `96d6d44 <https://github.com/cmbant/CAMB/commit/96d6d44c1c5538efbb893859b737e30c2d64ac24>`_ (2025-07-07);
 all changes since then are shown in the
-`compare view <https://github.com/<USER>/<REPO>/compare/96d6d44...geo_growth>`_.
+`compare view <https://github.com/shuimufge/CAMB_geo_growth/compare/96d6d44...geo_growth>`_.
 For the official CAMB, see https://github.com/cmbant/CAMB.
 
 Modifications (branch ``geo_growth``):
@@ -22,10 +22,7 @@ Modifications (branch ``geo_growth``):
   ``want_quad`` (all default ``True``; ``set_cosmology`` arguments) turn individual contributions
   to the temperature source on or off.
 
-To install this version::
-
-    git clone --recursive -b geo_growth https://github.com/<USER>/<REPO>
-    pip install -e ./<REPO>
+An example notebook can be found in ``make_plots.ipynb``.
 
 If you use this code, please cite Ge et al. (in preparation) and the CAMB papers
 (`Lewis, Challinor & Lasenby 2000 <https://arxiv.org/abs/astro-ph/9911177>`_;

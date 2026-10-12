@@ -621,8 +621,8 @@ class CAMBparams(F2003Class):
         num_massive_neutrinos=1,
         mnu=0.06,
         mnu_growth: float | None = None,
-        WantSplitGeo = False, 
-        want_mono = True, 
+        WantSplitGeo = False,
+        want_mono = True,
         want_doppler = True,
         want_isw = True,
         want_quad = True,
@@ -729,7 +729,7 @@ class CAMBparams(F2003Class):
         omnuh2 = omnuh2 + omnuh2_sterile
         self.omnuh2 = omnuh2
         self.WantSplitGeo = WantSplitGeo
-        print("WantSplitGeo=", self.WantSplitGeo)
+        # print("WantSplitGeo=", self.WantSplitGeo)
         self.want_mono = want_mono
         self.want_doppler = want_doppler
         self.want_isw = want_isw
